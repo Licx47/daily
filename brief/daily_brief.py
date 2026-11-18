@@ -16,7 +16,7 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/122.0 Safari/537.36")
 
 QUERIES = {
-    "pet": ["宠物食品", "猫 冻干", "宠物营养补充剂", "宠物品牌 融资", "宠物 电商", "宠物 政策 标准", "宠物 展会"],
+    "pet": ["宠物", "宠物食品", "宠物营养补充剂", "宠物品牌 融资", "宠物 电商", "宠物 政策 标准", "宠物 展会", "猫粮 新品"],
     "global": ["全球经济", "美联储 利率", "芯片 供应链", "监管 新规", "国际贸易 关税", "消费 零售 数据"],
     "ai": ["AI 电商", "AI 宠物", "大模型 发布", "AI 创业", "AI 视频 生成", "AI Agent 落地"],
 }
@@ -108,44 +108,73 @@ SCHEMA = (
  '"action":"今日可执行的一件事"}'
 )
 
+def _llm_call(prompt, key, max_tokens=4000):
+    body = json.dumps({"model": "deepseek-chat",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3, "max_tokens": max_tokens,
+        "response_format": {"type": "json_object"}}).encode()
+    req = urllib.request.Request("https://api.deepseek.com/chat/completions", data=body,
+        headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
+    with urllib.request.urlopen(req, timeout=240) as r:
+        data = json.loads(r.read().decode())
+    return json.loads(data["choices"][0]["message"]["content"])
+
+def llm_section(section, items, key, want=11):
+    lines = []
+    for i, it in enumerate(items[:40]):
+        lines.append('%d. %s | %s | %s | %s' % (i, it["title"], it.get("desc", "")[:100],
+                                                 it.get("time", ""), it["url"]))
+    prompt = (
+        "你是绒毛巨兽（宠物营养补充剂品牌）的品牌顾问。下面是【%s】板块过去 24 小时的候选新闻。\n"
+        "请整理成 JSON：{\"items\":[{\"title\":\"\",\"source\":\"\",\"fact\":\"事实，50-70字，含数字\","
+        "\"impact\":\"行业影响，一句\",\"insight\":\"引发的反思，一句\",\"advice\":\"建议动作，一句\",\"url\":\"\"}]}\n"
+        "要求：\n"
+        "1. 输出 %d 条（不少于 8 条），按重要性排序，第一条最重要；\n"
+        "2. impact 写这件事改变了什么；insight 写更高一层的判断（行业规律/供需/竞争格局）；advice 写我们该做什么；\n"
+        "3. url 只能从候选里选，不得编造；\n"
+        "4. 口吻冷静直接，不喊口号、不堆形容词。\n\n" % (section, want)
+    ) + "\n".join(lines)
+    try:
+        data = _llm_call(prompt, key)
+        items_out = data.get("items", [])
+        print(section, "LLM 出稿", len(items_out))
+        return items_out
+    except Exception as e:
+        print(section, "LLM 失败：", e)
+        return []
+
+def llm_headline(sections, key):
+    heads = []
+    for k, name in (("pet", "宠物"), ("global", "全球"), ("ai", "AI")):
+        for x in (sections.get(k) or [])[:2]:
+            heads.append("[%s] %s" % (name, x.get("title", "")))
+    prompt = ("下面是今天的行业条目。请用 JSON 输出：{\"headline\":\"今日判断，25字内\","
+              "\"summary\":\"今日总览，50-70字\",\"action\":\"今日可执行的一件事，一句具体动作\"}\n"
+              "口吻：品牌顾问，冷静直接。\n\n" + "\n".join(heads))
+    try:
+        return _llm_call(prompt, key, max_tokens=600)
+    except Exception as e:
+        print("headline 失败：", e)
+        return {}
+
 def llm_summarize(pools):
     key = os.environ.get("DEEPSEEK_API_KEY")
     if not key:
         print("无 key，走兜底")
         return None
-    parts = []
-    for section, items in pools.items():
-        lines = ["[%s]" % section]
-        for i, it in enumerate(items[:40]):
-            lines.append('%d. %s | %s | %s | %s' % (i, it["title"], it.get("desc", "")[:100], it.get("time", ""), it["url"]))
-        parts.append("\n".join(lines))
-    prompt = (
-        "你是绒毛巨兽（宠物营养补充剂品牌）的品牌顾问，每天给创始人写一份行业简报。\n"
-        "口吻：冷静、直接、有立场。不喊口号、不堆形容词、不标题党。\n"
-        "把候选新闻整理成 JSON，严格按此结构：\n" + SCHEMA + "\n"
-        "规则：\n"
-        "1. 每块 10–13 条，按重要性从高到低排列（第一条必须是最重要的）；\n"
-        "2. 每条四段：fact 写事实（谁、做了什么、关键数字）；impact 写这件事改变了什么；"
-        "insight 写“引发的反思”（更上一层的判断，可以说行业规律、供需变化、竞争格局）；"
-        "advice 写“我们该做什么”（一句具体动作）；\n"
-        "3. 宠物优先猫/冻干/营养补充剂/渠道/政策/展会；全球优先影响商业、供应链、政策；"
-        "AI 优先电商、内容、工具，且能落到我们身上的；\n"
-        "4. url 只能从候选里选，不得编造；source 写媒体名；\n"
-        "5. 数量不够时宁可重复不同视角，也不要编造新闻。\n\n" + "\n\n".join(parts)
-    )
-    body = json.dumps({"model": "deepseek-chat",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3, "max_tokens": 8000,
-        "response_format": {"type": "json_object"}}).encode()
-    req = urllib.request.Request("https://api.deepseek.com/chat/completions", data=body,
-        headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
-    try:
-        with urllib.request.urlopen(req, timeout=300) as r:
-            data = json.loads(r.read().decode())
-        return json.loads(data["choices"][0]["message"]["content"])
-    except Exception as e:
-        print("LLM 失败：", e)
+    sections = {}
+    for k in ("pet", "global", "ai"):
+        sections[k] = llm_section(k, pools.get(k, []), key)
+        if len(sections[k]) < 5 and pools.get(k):
+            print(k, "重试一次")
+            sections[k] = llm_section(k, pools.get(k, []), key, want=10) or sections[k]
+    if sum(len(v) for v in sections.values()) < 6:
         return None
+    meta = llm_headline(sections, key)
+    return {"headline": meta.get("headline", "今日行业要点"),
+            "summary": meta.get("summary", ""),
+            "action": meta.get("action", ""),
+            "sections": sections}
 
 def fallback(pools):
     def pack(items):
