@@ -185,7 +185,7 @@ def esc(s):
     return html.escape(str(s or ""))
 
 def render(data, d):
-    names = [("pet", "① 宠物"), ("global", "② 全球重大事件"), ("ai", "③ AI × 我在做的事")]
+    names = [("pet", "① 宠物行业热点"), ("global", "② 全球热点"), ("ai", "③ AI 热点")]
     out = []
     total = 0
     for key, name in names:
@@ -203,12 +203,12 @@ def render(data, d):
                    % (name, len(focus) + len(brief), fh, ('<ul class="brief">%s</ul>' % bh) if bh else ""))
     return """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>绒毛巨兽 · %s 行业日报</title><style>%s</style></head><body><div class="wrap">
+<title>宠物行业热点 · %s</title><style>%s</style></head><body><div class="wrap">
 <div class="top">%s ｜ 昨日21:00 — 今日21:00 ｜ 共 %d 条</div>
 <h1>%s</h1><div class="sub">只看这一句，也够用今天。</div>
 %s
 <div class="act"><b>今日可执行的一件事</b>%s</div>
-<div class="foot">绒毛巨兽 FURRY HERO · 让每次投喂，都变成游戏</div>
+<div class="foot">宠物行业热点 · 每日 21:00 更新 · 绒毛巨兽 FURRY HERO</div>
 </div></body></html>""" % (esc(d), CSS, esc(d), total, esc(data.get("headline")), "".join(out), esc(data.get("action")))
 
 def push(data, url):
@@ -221,11 +221,11 @@ def push(data, url):
         s = "".join("<b>%s</b><br>%s<br>" % (esc(x.get("title")), esc(x.get("detail"))) for x in f)
         rest = "".join("· %s<br>" % esc(x.get("title")) for x in (b.get("brief", []) or [])[:4])
         return (s + rest) or "今日无重大更新<br>"
-    content = ("<b>今日最该关注</b><br>%s<hr><b>① 宠物</b><br>%s<hr><b>② 全球</b><br>%s<hr>"
-               "<b>③ AI × 我在做的事</b><br>%s<hr><b>今日可执行</b><br>%s%s") % (
+    content = ("<b>今日最该关注</b><br>%s<hr><b>① 宠物行业热点</b><br>%s<hr><b>② 全球热点</b><br>%s<hr>"
+               "<b>③ AI 热点</b><br>%s<hr><b>今日可执行</b><br>%s%s") % (
         esc(data.get("headline")), blk("pet"), blk("global"), blk("ai"), esc(data.get("action")),
         ('<br><a href="%s">看完整日报 →</a>' % url) if url else "")
-    body = {"token": token, "title": "绒毛巨兽日报 " + NOW.strftime("%m-%d"),
+    body = {"token": token, "title": "宠物行业热点 " + NOW.strftime("%m-%d"),
             "content": content, "template": "html"}
     topic = os.environ.get("PUSHPLUS_TOPIC")
     if topic:
