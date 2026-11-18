@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""绒毛巨兽 · 每日行业简报（云端版，标准库实现）
+"""宠物行业热点日报（云端版，标准库实现）
 
-结构：每块「1–2 条重点（展开说）+ 3–6 条简讯（一句话带过）」，
-     重点放版面，简讯只留标题，整体控制在一屏半。
+结构：三块（宠物行业热点 / 全球热点 / AI 热点）
+     每块 1–3 张重点卡（标题 + 来源 + 事实摘要 + 影响 + 建议）+ 3–6 条简讯
 
-环境变量：DEEPSEEK_API_KEY / PUSHPLUS_TOKEN / PAGES_URL / DRY_RUN
+环境变量：DEEPSEEK_API_KEY / PUSHPLUS_TOKEN / PUSHPLUS_TOPIC / PAGES_URL / DRY_RUN
 """
 import os, re, json, html, datetime, urllib.request, urllib.parse
 import xml.etree.ElementTree as ET
@@ -97,54 +97,52 @@ def collect():
             dt = to_dt(it.get("pub"))
             if dt and dt < SINCE:
                 continue
+            it["time"] = dt.strftime("%m-%d %H:%M") if dt else ""
             keep.append(it)
         out[section] = keep[:30]
         print(section, "候选", len(out[section]))
     return out
 
 SCHEMA = (
- '{"headline":"今日最该关注的一件事，20字内",'
+ '{"headline":"今日判断，一句话，25字内",'
+ '"summary":"今日总览，40-60字，说清这一天的主线",'
  '"sections":{'
- '"pet":{"focus":[{"title":"","detail":"为什么重要，60-90字","url":""}],"brief":[{"title":"不超过18字","url":""}]},'
- '"global":{"focus":[{"title":"","detail":"影响我们哪一环，60-90字","url":""}],"brief":[{"title":"","url":""}]},'
- '"ai":{"focus":[{"title":"","detail":"能怎么用在我身上，一句具体动作","url":""}],"brief":[{"title":"","url":""}]}},'
- '"action":"今日可执行的一件事，一句具体动作"}'
+ '"pet":{"focus":[{"title":"","source":"","summary":"事实，60-90字","impact":"行业影响，一句","trend":"趋势判断，一句","advice":"创始人视角/建议，一句具体动作","url":""}],"brief":[{"title":"","url":""}]},'
+ '"global":{"focus":[...同上...],"brief":[{"title":"","url":""}]},'
+ '"ai":{"focus":[...同上...],"brief":[{"title":"","url":""}]}},'
+ '"action":"今日可执行的一件事"}'
 )
 
 def llm_summarize(pools):
     key = os.environ.get("DEEPSEEK_API_KEY")
     if not key:
-        print("无 DEEPSEEK_API_KEY，走兜底")
+        print("无 key，走兜底")
         return None
     parts = []
     for section, items in pools.items():
         lines = ["[%s]" % section]
         for i, it in enumerate(items[:25]):
-            lines.append('%d. %s | %s | %s' % (i, it["title"], it.get("desc", "")[:90], it["url"]))
+            lines.append('%d. %s | %s | %s | %s' % (i, it["title"], it.get("desc", "")[:90], it.get("time", ""), it["url"]))
         parts.append("\n".join(lines))
     prompt = (
         "你是绒毛巨兽（宠物营养补充剂品牌）的品牌顾问，每天给创始人写一份内部简报。\n"
-        "口吻：顾问——冷静、直接、有立场；先给判断，再给建议，不绕弯子。\n"
-        "风格：不喊口号、不堆形容词、不用感叹号、不标题党；"
-        "每条 detail 写清“这意味着什么 + 建议做什么”，建议要具体到动作，不写空话套话。\n"
-        "把下面候选新闻整理成 JSON（严格按此结构）：\n" + SCHEMA + "\n"
+        "口吻：顾问——冷静、直接、有立场；先判断，再建议，不绕弯子。不喊口号、不堆形容词、不标题党。\n"
+        "把候选新闻整理成 JSON，严格按此结构：\n" + SCHEMA + "\n"
         "规则：\n"
-        "1. 每块 focus 1–2 条（真正重要的，detail 要写清'对我们意味着什么'），brief 3–6 条（只给标题，一句话带过）；\n"
-        "2. 每块总数不超过 10 条；\n"
-        "3. 宠物优先猫/冻干/营养补充剂；全球优先影响商业与供应链；AI 优先今天能用的；\n"
-        "4. url 只能从候选里选，不得编造；\n"
-        "5. 不要流水账，宁可少一条。\n\n" + "\n\n".join(parts)
+        "1. 每块 focus 1–3 条（真正重要的），brief 3–6 条（只给标题）；每块总数 ≤10；\n"
+        "2. focus 每条四段：summary 写事实（谁、做了什么、数字）；impact 写行业影响（这件事改变了什么）；"
+        "trend 写趋势判断（往哪走）；advice 写创始人视角（我们该做什么，具体动作）；\n"
+        "3. 宠物优先猫/冻干/营养补充剂/渠道；全球优先影响商业与供应链；AI 优先今天能用的；\n"
+        "4. url 只能从候选里选，不得编造；source 写媒体名或“Google新闻”；\n"
+        "5. 没有够格的新闻就少写，不凑数。\n\n" + "\n\n".join(parts)
     )
-    body = json.dumps({
-        "model": "deepseek-chat",
+    body = json.dumps({"model": "deepseek-chat",
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
-        "response_format": {"type": "json_object"},
-    }).encode()
+        "temperature": 0.3, "response_format": {"type": "json_object"}}).encode()
     req = urllib.request.Request("https://api.deepseek.com/chat/completions", data=body,
         headers={"Content-Type": "application/json", "Authorization": "Bearer " + key})
     try:
-        with urllib.request.urlopen(req, timeout=120) as r:
+        with urllib.request.urlopen(req, timeout=150) as r:
             data = json.loads(r.read().decode())
         return json.loads(data["choices"][0]["message"]["content"])
     except Exception as e:
@@ -155,64 +153,93 @@ def fallback(pools):
     def pack(items):
         if not items:
             return {"focus": [], "brief": []}
-        return {"focus": [{"title": items[0]["title"], "detail": items[0].get("desc", "")[:80], "url": items[0]["url"]}],
-                "brief": [{"title": it["title"][:18], "url": it["url"]} for it in items[1:6]]}
-    return {"headline": "今日简报（自动兜底，未做 AI 归纳）",
+        it = items[0]
+        return {"focus": [{"title": it["title"], "source": it.get("source", ""), "summary": it.get("desc", "")[:90],
+                            "impact": "", "advice": "", "url": it["url"]}],
+                "brief": [{"title": x["title"][:20], "url": x["url"]} for x in items[1:6]]}
+    return {"headline": "今日简报（兜底版）", "summary": "未接 AI，仅按源抓取，建议先看重点卡。",
             "sections": {k: pack(v) for k, v in pools.items()},
-            "action": "挑一条与猫/冻干相关的，做成明天的选题。"}
+            "action": "挑一条与猫/冻干相关的，做成明天的一条选题。"}
 
 CSS = """
 *{box-sizing:border-box}
-body{margin:0;background:#FBF6EC;color:#3A2A20;font:16px/1.65 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif}
-.wrap{max-width:720px;margin:0 auto;padding:22px 18px 56px}
-.top{font-size:12px;color:#9645E1;font-weight:700;letter-spacing:.6px}
-h1{font-size:23px;line-height:1.42;margin:10px 0 6px;letter-spacing:-.2px}
-.sub{color:#9a8b84;font-size:13px}
-.sec{margin:26px 0 0}
-.sec h2{font-size:14px;color:#9645E1;margin:0 0 10px;letter-spacing:1px;display:flex;justify-content:space-between;align-items:baseline}
-.sec h2 span{font-size:11px;color:#bbb;font-weight:400;letter-spacing:0}
-.focus{background:#fff;border-left:4px solid #9645E1;border-radius:10px;padding:14px 15px;margin-bottom:10px;box-shadow:0 1px 8px rgba(58,42,32,.05)}
-.focus .t{font-weight:700;font-size:16px;line-height:1.45}
-.focus .d{color:#5f5048;font-size:14px;margin-top:6px}
-.focus a{color:#b9a7c9;font-size:11px;text-decoration:none;display:inline-block;margin-top:6px;word-break:break-all}
-.brief{margin:2px 0 0;padding:0;list-style:none}
-.brief li{font-size:14px;color:#4a3b34;padding:5px 0 5px 14px;position:relative}
+body{margin:0;background:#FBF6EC;color:#2E2A28;font:16px/1.7 -apple-system,'PingFang SC','Microsoft YaHei',sans-serif}
+.wrap{max-width:720px;margin:0 auto;padding:26px 18px 60px}
+.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #9645E1;padding-bottom:14px}
+.brand{font-size:25px;font-weight:800;letter-spacing:-.5px;line-height:1.2}
+.brand em{font-style:normal;color:#9645E1}
+.cov{font-size:12px;color:#9a8b84;margin-top:6px}
+.badge{background:#9645E1;color:#fff;border-radius:14px;padding:8px 12px;text-align:center;font-size:13px;line-height:1.35;min-width:76px}
+.badge b{display:block;font-size:17px}
+.intro{background:#fff;border-radius:14px;padding:16px 18px;margin:20px 0 6px;box-shadow:0 2px 10px rgba(58,42,32,.06);font-size:14px;color:#4a3b34;border-left:4px solid #9645E1}
+.intro b{color:#9645E1}
+.sec{margin-top:30px}
+.sec-h{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.chip{background:#9645E1;color:#fff;border-radius:9px;padding:6px 12px;font-weight:700;font-size:14px;letter-spacing:.5px}
+.chip-tag{color:#9a8b84;font-size:12px}
+.card{background:#fff;border-radius:14px;padding:18px;margin-bottom:14px;box-shadow:0 2px 12px rgba(58,42,32,.07)}
+.card h3{margin:0 0 6px;font-size:17px;line-height:1.45;color:#9645E1}
+.meta{font-size:12px;color:#a99a92;margin-bottom:10px}
+.card p{margin:0 0 10px;font-size:15px;line-height:1.8;color:#4a3b34}
+.kv{font-size:14px;line-height:1.75;margin-top:10px;padding-left:10px;border-left:3px solid #E8DFF6}
+.kv b{color:#9645E1;font-weight:700}
+.box{background:#F6F1FB;border-radius:10px;padding:12px 14px;margin-top:12px;font-size:14px;line-height:1.75;color:#4a3b34}
+.box b{color:#7B3FC4;font-weight:700}
+.brief{margin:6px 0 0;padding:0;list-style:none}
+.brief li{font-size:14px;color:#4a3b34;padding:7px 0 7px 14px;position:relative;border-top:1px dashed #EEE7F5}
 .brief li:before{content:"·";position:absolute;left:2px;color:#9645E1;font-weight:700}
-.brief a{color:inherit;text-decoration:none}
-.act{background:#3A2A20;color:#fff;border-radius:12px;padding:15px 16px;margin-top:28px;font-size:15px}
-.act b{color:#F2C94C;font-size:12px;letter-spacing:1px;display:block;margin-bottom:4px}
+.act{background:#2E2A28;color:#fff;border-radius:14px;padding:16px 18px;margin-top:30px;font-size:15px}
+.act b{color:#F2C94C;font-size:12px;letter-spacing:1px;display:block;margin-bottom:5px}
 .foot{color:#c3b6ae;font-size:11px;text-align:center;margin-top:26px}
+a{color:inherit;text-decoration:none}
 """
 
 def esc(s):
     return html.escape(str(s or ""))
 
 def render(data, d):
-    names = [("pet", "① 宠物行业热点"), ("global", "② 全球热点"), ("ai", "③ AI 热点")]
-    out = []
+    weekday = "一二三四五六日"[NOW.weekday()]
+    names = [("pet", "一、宠物行业热点", "产品 · 渠道 · 法规"),
+             ("global", "二、全球热点", "经济 · 供应链 · 政策"),
+             ("ai", "三、AI 热点", "电商 · 内容 · 工具")]
+    secs = []
     total = 0
-    for key, name in names:
+    for key, name, tag in names:
         blk = data.get("sections", {}).get(key, {}) or {}
         focus = blk.get("focus", []) or []
         brief = blk.get("brief", []) or []
         total += len(focus) + len(brief)
-        fh = "".join(
-            '<div class="focus"><div class="t">%s</div><div class="d">%s</div>'
-            '<a href="%s" target="_blank">来源</a></div>' % (esc(x.get("title")), esc(x.get("detail")), esc(x.get("url")))
-            for x in focus)
-        bh = "".join('<li><a href="%s" target="_blank">%s</a></li>' % (esc(x.get("url")), esc(x.get("title")))
-                     for x in brief)
-        out.append('<div class="sec"><h2>%s<span>%d 条</span></h2>%s%s</div>'
-                   % (name, len(focus) + len(brief), fh, ('<ul class="brief">%s</ul>' % bh) if bh else ""))
+        cards = []
+        for x in focus:
+            kv = ""
+            if x.get("impact"):
+                kv += '<div class="kv impact"><b>行业影响｜</b>%s</div>' % esc(x["impact"])
+            if x.get("trend"):
+                kv += '<div class="kv trend"><b>趋势判断｜</b>%s</div>' % esc(x["trend"])
+            if x.get("advice"):
+                kv += '<div class="box"><b>创始人视角｜</b>%s</div>' % esc(x["advice"])
+            cards.append(
+                '<div class="card"><h3>%s</h3>'
+                '<div class="meta">%s ｜ <a href="%s">原文</a></div>'
+                '<p>%s</p>%s</div>' % (
+                    esc(x.get("title")), esc(x.get("source") or "来源"), esc(x.get("url")),
+                    esc(x.get("summary")), kv))
+        bl = "".join('<li><a href="%s">%s</a></li>' % (esc(x.get("url")), esc(x.get("title"))) for x in brief)
+        secs.append('<div class="sec"><div class="sec-h"><span class="chip">%s</span>'
+                    '<span class="chip-tag">%s ｜ %d 条</span></div>%s%s</div>' % (
+                        name, tag, len(focus) + len(brief), "".join(cards),
+                        ('<ul class="brief">%s</ul>' % bl) if bl else ""))
     return """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>宠物行业热点 · %s</title><style>%s</style></head><body><div class="wrap">
-<div class="top">%s ｜ 昨日21:00 — 今日21:00 ｜ 共 %d 条</div>
-<h1>%s</h1><div class="sub">只看这一句，也够用今天。</div>
+<title>宠物行业热点日报 · %s</title><style>%s</style></head><body><div class="wrap">
+<div class="head"><div><div class="brand">宠物行业热点<em>日报</em></div>
+<div class="cov">覆盖：昨日 21:00 — 今日 21:00 ｜ 共 %d 条</div></div>
+<div class="badge"><b>%s</b>周%s</div></div>
+<div class="intro">聚焦宠物食品 / 营养补充剂 / 渠道电商 / 法规标准 / 全球与 AI 动态，<b>以品牌顾问视角</b>给出判断与建议。今日判断：<b>%s</b></div>
 %s
 <div class="act"><b>今日可执行的一件事</b>%s</div>
-<div class="foot">宠物行业热点 · 每日 21:00 更新 · 绒毛巨兽 FURRY HERO</div>
-</div></body></html>""" % (esc(d), CSS, esc(d), total, esc(data.get("headline")), "".join(out), esc(data.get("action")))
+<div class="foot">宠物行业热点日报 · 每日 21:00 更新 · 绒毛巨兽 FURRY HERO</div>
+</div></body></html>""" % (esc(d), CSS, total, d[5:], weekday, esc(data.get("headline")), "".join(secs), esc(data.get("action")))
 
 def push(data, url):
     token = os.environ.get("PUSHPLUS_TOKEN")
@@ -220,11 +247,12 @@ def push(data, url):
         print("跳过推送"); return
     def blk(key):
         b = data["sections"].get(key, {}) or {}
-        f = b.get("focus", [])[:1]
-        s = "".join("<b>%s</b><br>%s<br>" % (esc(x.get("title")), esc(x.get("detail"))) for x in f)
-        rest = "".join("· %s<br>" % esc(x.get("title")) for x in (b.get("brief", []) or [])[:4])
-        return (s + rest) or "今日无重大更新<br>"
-    content = ("<b>今日最该关注</b><br>%s<hr><b>① 宠物行业热点</b><br>%s<hr><b>② 全球热点</b><br>%s<hr>"
+        rows = []
+        for x in (b.get("focus", []) or [])[:1]:
+            rows.append("<b>%s</b><br>%s" % (esc(x.get("title")), esc(x.get("advice") or x.get("summary"))))
+        rows += ["· %s" % esc(x.get("title")) for x in (b.get("brief", []) or [])[:3]]
+        return "<br>".join(rows) or "今日无更新"
+    content = ("<b>今日判断</b><br>%s<hr><b>① 宠物行业热点</b><br>%s<hr><b>② 全球热点</b><br>%s<hr>"
                "<b>③ AI 热点</b><br>%s<hr><b>今日可执行</b><br>%s%s") % (
         esc(data.get("headline")), blk("pet"), blk("global"), blk("ai"), esc(data.get("action")),
         ('<br><a href="%s">看完整日报 →</a>' % url) if url else "")
@@ -232,7 +260,7 @@ def push(data, url):
             "content": content, "template": "html"}
     topic = os.environ.get("PUSHPLUS_TOPIC")
     if topic:
-        body["topic"] = topic          # 群组推送：组内所有人都能收到
+        body["topic"] = topic
     payload = json.dumps(body).encode()
     req = urllib.request.Request("https://www.pushplus.plus/send", data=payload,
                                  headers={"Content-Type": "application/json"})
