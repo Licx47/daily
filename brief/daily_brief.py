@@ -225,8 +225,12 @@ def push(data, url):
                "<b>③ AI × 我在做的事</b><br>%s<hr><b>今日可执行</b><br>%s%s") % (
         esc(data.get("headline")), blk("pet"), blk("global"), blk("ai"), esc(data.get("action")),
         ('<br><a href="%s">看完整日报 →</a>' % url) if url else "")
-    payload = json.dumps({"token": token, "title": "绒毛巨兽日报 " + NOW.strftime("%m-%d"),
-                          "content": content, "template": "html"}).encode()
+    body = {"token": token, "title": "绒毛巨兽日报 " + NOW.strftime("%m-%d"),
+            "content": content, "template": "html"}
+    topic = os.environ.get("PUSHPLUS_TOPIC")
+    if topic:
+        body["topic"] = topic          # 群组推送：组内所有人都能收到
+    payload = json.dumps(body).encode()
     req = urllib.request.Request("https://www.pushplus.plus/send", data=payload,
                                  headers={"Content-Type": "application/json"})
     try:
